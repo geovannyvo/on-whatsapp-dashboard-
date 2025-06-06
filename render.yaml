@@ -1,0 +1,98 @@
+# render.yaml - Infraestructura como Código para nuestra plataforma de WhatsApp
+
+# Versión del blueprint de Render
+version: 1
+
+services:
+  # --- Servicio 1: Base de Datos PostgreSQL para n8n ---
+  # Esto crea una base de datos gestionada por Render.
+  # Guardará de forma segura y persistente tus workflows y credenciales de n8n.
+  - type: psql
+    name: n8n-database
+    plan: free # 'free' es para iniciar. Considera 'starter' para producción.
+    psqlVersion: 14
+    region: ohio # Elige la región más cercana a ti o a tus clientes.
+
+  # --- Servicio 2: n8n (El Cerebro de la Automatización) ---
+  # Despliega n8n desde su imagen oficial de Docker y lo conecta a nuestra base de datos.
+  - type: web
+    name: n8n-main
+    runtime: docker
+    image:
+      url: n8n-io/n8n:latest # Usa la imagen oficial y más reciente de n8n.
+    plan: starter # Se recomienda el plan 'starter' para n8n para un mejor rendimiento. Puedes empezar con 'free'.
+    healthCheckPath: /healthz # Ruta estándar para que Render sepa si n8n está saludable.
+    envVars:
+      # --- Configuración de la Base de Datos ---
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        fromService: # Render inyectará automáticamente el host de la BD
+          type: psql
+          name: n8n-database
+          property: host
+      - key: DB_POSTGRESDB_PORT
+        fromService:
+          type: psql
+          name: n8n-database
+          property: port
+      - key: DB_POSTGRESDB_DATABASE
+        fromService:
+          type: psql
+          name: n8n-database
+          property: database
+      - key: DB_POSTGRESDB_USER
+        fromService:
+          type: psql
+          name: n8n-database
+          property: user
+      - key: DB_POSTGRESDB_PASSWORD
+        fromService:
+          type: psql
+          name: n8n-database
+          property: password
+      
+      # --- Configuración General de n8n ---
+      - key: GENERIC_TIMEZONE
+        value: America/Guayaquil # ¡IMPORTANTE! Para que los horarios sean correctos.
+      - key: N8N_HOST
+        value: ${RENDER_EXTERNAL_URL} # Le dice a n8n cuál es su propia URL pública.
+      - key: WEBHOOK_URL
+        value: ${RENDER_EXTERNAL_URL} # Permite que los webhooks de n8n funcionen correctamente.
+      # Nota: No definimos usuario/contraseña aquí para poder crearlos en la primera visita.
+
+  # --- Servicio 3: Evolution API (El Puente con WhatsApp) ---
+  # Despliega la Evolution API desde su imagen oficial de Docker.
+  - type: web
+    name: evolution-api
+    runtime: docker
+    image:
+      url: atende/evolution-api:latest # Imagen oficial de Evolution API.
+    plan: free # El plan 'free' suele ser suficiente para empezar.
+    envVars:
+      - key: PORT
+        value: 8080 # Puerto interno en el que corre la aplicación.
+      - key: CREATE_INSTANCE
+        value: "false" # Lo crearemos manualmente después del despliegue.
+
+      # --- Variables de Autenticación y Conexión de Evolution API ---
+      - key: AUTHENTICATION_API_KEY
+        generateValue: true # Render creará y guardará una clave de API segura por nosotros.
+      - key: DATABASE_ENABLED
+        value: "false" # Usará almacenamiento local de archivos, más simple para empezar.
+      
+      # --- Configuración de Webhooks (para que Evolution hable con n8n) ---
+      - key: WH_EVENT_MESSAGE
+        value: "true" # Notificar a n8n cuando llegue un mensaje.
+      - key: WH_EVENT_CONNECTION
+        value: "true" # Notificar a n8n sobre cambios de estado (conectado, desconectado, etc.).
+      
+      # --- ¡IMPORTANTE! DEBES CONFIGURAR ESTAS VARIABLES MÁS TARDE ---
+      # Estas son las claves de tu app en Meta for Developers.
+      # Las añadiremos desde el dashboard de Render una vez desplegado.
+      - key: FACEBOOK_APP_ID
+        sync: false # No guardar este valor en el `render.yaml` por seguridad.
+      - key: FACEBOOK_APP_SECRET
+        sync: false
+      - key: FACEBOOK_WEBHOOK_VERIFY_TOKEN
+        generateValue: true # Dejamos que Render genere un token de verificación seguro.
